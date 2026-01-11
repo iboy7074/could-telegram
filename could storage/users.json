@@ -1,0 +1,34 @@
+{
+    "bharath": {
+        "username": "143"
+    },
+    "8134902662": {
+        "username": "Unknown",
+        "web_password": null
+    },
+    "6734675500": {
+        "username": "Thirisha3575",
+        "web_password": "bharath",
+        "folders": [
+            "/"
+        ],
+        "current_folder": "/"
+    },
+    "7305454490": {
+        "username": "AdminUser",
+        "web_password": "post/143",
+        "is_admin": true,
+        "folders": [
+            "/"
+        ],
+        "current_folder": "/"
+    },
+    "8223554454": {
+        "username": "Unknown",
+        "web_password": null,
+        "current_folder": "/",
+        "folders": [
+            "/"
+        ]
+    }
+}

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Cloud Storage</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .file-item {
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .btn {
+            padding: 5px 10px;
+            background: #0088cc;
+            color: white;
+            text-decoration: none;
+            border-radius: 3px;
+        }
+
+        .btn-danger {
+            background: #cc0000;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        input {
+            padding: 8px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .admin-panel {
+            background: #ffeebb;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border: 1px solid #eebb00;
+        }
+    </style>
+</head>
+
+<body>
+    {% if 'user_id' in session %}
+    <h1>📂 My Files</h1>
+    <p>
+        Logged in as ID: {{ session['user_id'] }} |
+        <a href="{{ url_for('logout') }}">Logout</a>
+        {% if is_admin %}
+        | <a href="{{ url_for('admin') }}">👑 Admin Panel</a>
+        {% endif %}
+    </p>
+
+    <div style="background: #f9f9f9; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+        <h3>Upload New File</h3>
+        <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
+            <input type="file" name="file" required>
+            <br><br>
+            <button type="submit" class="btn">Upload</button>
+        </form>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+        <form action="{{ url_for('index') }}" method="get">
+            <input type="text" name="q" placeholder="🔍 Search your files..." value="{{ query if query else '' }}"
+                style="width: 70%; display: inline-block;">
+            <button type="submit" class="btn" style="width: 25%;">Search</button>
+            {% if query %}
+            <a href="{{ url_for('index') }}" class="btn btn-danger" style="background: #666;">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+
+    {% for code, name in files %}
+    <div class="file-item">
+        <span><strong>{{ code }}</strong>: {{ name }}</span>
+        <a href="{{ url_for('download', code=code) }}" class="btn">Download</a>
+    </div>
+    {% else %}
+    <p>No files found.</p>
+    {% endfor %}
+    {% else %}
+    <h1>🔐 Login</h1>
+    <form action="{{ url_for('login') }}" method="post">
+        <div class="form-group">
+            <label>Telegram User ID:</label>
+            <input type="text" name="user_id" required>
+        </div>
+        <div class="form-group">
+            <label>Web Password:</label>
+            <input type="password" name="password" required>
+        </div>
+        <button type="submit" class="btn">Login</button>
+    </form>
+    <p><em>Note: Set your password in the Telegram Bot using <code>/setpassword</code></em></p>
+    {% endif %}
+</body>
+
+</html>
