@@ -91,7 +91,7 @@ def get_file_list_markup(user_id: int, current_folder: str) -> InlineKeyboardMar
         
     # Files
     files = file_manager.get_user_files(user_id, current_folder)
-    for code, name, _ in files:
+    for code, name, *_ in files:
         keyboard.append([InlineKeyboardButton(f"📄 {name}", callback_data=f"file:{code}")])
         
     return InlineKeyboardMarkup(keyboard)
@@ -241,8 +241,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith('dl:'):
         await query.answer()
         code = query.data.split(':')[1]
-        path = file_manager.get_file_path(code)
-        if path and os.path.exists(path):
+        record = file_manager.get_record(code)
+        path = record.get("path") if record else None
+        if record and record.get("encrypted"):
+            await context.bot.answer_callback_query(
+                query.id,
+                text="Encrypted web uploads must be downloaded from the website with the encryption password.",
+                show_alert=True,
+            )
+        elif path and os.path.exists(path):
             await context.bot.send_document(chat_id=user_id, document=open(path, 'rb'))
         else:
             await context.bot.answer_callback_query(query.id, text="File not found!", show_alert=True)
@@ -407,7 +414,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"🔍 No files found for '{text}'.")
         else:
             message = f"🔍 **Search Results for '{text}':**\n\n"
-            for code, name, _ in results:
+            for code, name, *_ in results:
                 message += f"📄 `{code}` - {name}\n"
             await update.message.reply_text(message, parse_mode='Markdown')
             
@@ -421,10 +428,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Normal text handling (save as text file or retrieve by code)
-    file_path_str = file_manager.get_file_path(text)
-    
+    record = file_manager.get_record(text)
+    file_path_str = record.get("path") if record else file_manager.get_file_path(text)
+
     if file_path_str:
-        if os.path.exists(file_path_str):
+        if record and record.get("encrypted"):
+            await update.message.reply_text("🔐 This file is encrypted. Please download it from the website with your encryption password.")
+        elif os.path.exists(file_path_str):
             # Check if it's a text file we created
             if file_path_str.endswith(".txt"):
                 try:
@@ -456,6 +466,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Text saved to `{current_folder}`! \n\nCode: `{code}`",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+
+async def set_password_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await update.message.reply_text("Please `/register` first.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: `/setpassword <new_web_password>`")
+        return
+
+    password = " ".join(context.args)
+    if len(password) < 8:
+        await update.message.reply_text("❌ Password must be at least 8 characters.")
+        return
+
+    user_manager.set_web_password(update.effective_chat.id, password)
+    await update.message.reply_text(
+        f"✅ Web password set! You can login with User ID `{update.effective_chat.id}`.",
+        parse_mode='Markdown',
+    )
 
 async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update): return
@@ -491,7 +521,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     message = f"🔍 **Search Results for '{query}':**\n\n"
-    for code, name, _ in results:
+    for code, name, *_ in results:
         message += f"📄 `{code}` - {name}\n"
     
     await update.message.reply_text(message, parse_mode='Markdown')
@@ -514,6 +544,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('admin_login', admin_login))
     application.add_handler(CommandHandler('search', search))
     application.add_handler(CommandHandler('home', home))
+    application.add_handler(CommandHandler('setpassword', set_password_command))
     
     # Callback Handler
     application.add_handler(CallbackQueryHandler(button_handler))
