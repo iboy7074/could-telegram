@@ -1,60 +1,88 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
-    <title>Cloud Storage</title>
+    <title>Telegram Cloud Storage</title>
     <style>
         body {
-            font-family: sans-serif;
-            max-width: 800px;
+            background: #f4f8fb;
+            color: #1f2937;
+            font-family: Arial, sans-serif;
             margin: 0 auto;
+            max-width: 920px;
+            padding: 24px;
+        }
+
+        .card {
+            background: #fff;
+            border: 1px solid #dbe7ef;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(31, 41, 55, 0.08);
+            margin-bottom: 20px;
             padding: 20px;
         }
 
+        .grid {
+            display: grid;
+            gap: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        }
+
         .file-item {
+            align-items: center;
             border: 1px solid #ddd;
-            padding: 10px;
-            margin: 5px 0;
-            border-radius: 5px;
+            border-radius: 8px;
             display: flex;
             justify-content: space-between;
+            margin: 8px 0;
+            padding: 12px;
         }
 
         .btn {
-            padding: 5px 10px;
             background: #0088cc;
+            border: 0;
+            border-radius: 6px;
             color: white;
+            cursor: pointer;
+            display: inline-block;
+            padding: 9px 14px;
             text-decoration: none;
-            border-radius: 3px;
         }
 
         .btn-danger {
-            background: #cc0000;
+            background: #666;
         }
 
         .form-group {
-            margin-bottom: 15px;
+            margin-bottom: 14px;
         }
 
         input {
-            padding: 8px;
-            width: 100%;
+            border: 1px solid #b8c6d1;
+            border-radius: 6px;
             box-sizing: border-box;
+            padding: 10px;
+            width: 100%;
         }
 
-        .admin-panel {
-            background: #ffeebb;
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            border: 1px solid #eebb00;
+        .hint {
+            color: #596775;
+            font-size: 0.92rem;
+        }
+
+        .badge {
+            background: #e0f2fe;
+            border-radius: 999px;
+            color: #0369a1;
+            font-size: 0.8rem;
+            padding: 4px 8px;
         }
     </style>
 </head>
 
 <body>
     {% if 'user_id' in session %}
-    <h1>📂 My Files</h1>
+    <h1>📂 My Telegram Cloud Files</h1>
     <p>
         Logged in as ID: {{ session['user_id'] }} |
         <a href="{{ url_for('logout') }}">Logout</a>
@@ -63,48 +91,93 @@
         {% endif %}
     </p>
 
-    <div style="background: #f9f9f9; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-        <h3>Upload New File</h3>
+    <section class="card">
+        <h3>Upload encrypted file or photo</h3>
+        <p class="hint">Files are encrypted before saving locally. If <code>BOT_TOKEN</code> and
+            <code>TELEGRAM_STORAGE_CHAT_ID</code> are configured, the encrypted copy is also sent to Telegram storage.
+            Keep the encryption password safe; it is not stored.</p>
         <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
-            <input type="file" name="file" required>
-            <br><br>
-            <button type="submit" class="btn">Upload</button>
+            <div class="form-group">
+                <label>File / photo</label>
+                <input type="file" name="file" required>
+            </div>
+            <div class="form-group">
+                <label>Encryption password</label>
+                <input type="password" name="encryption_password" minlength="8" required>
+            </div>
+            <button type="submit" class="btn">Encrypt & Upload</button>
         </form>
-    </div>
+    </section>
 
-    <div style="margin-bottom: 20px;">
+    <section class="card">
         <form action="{{ url_for('index') }}" method="get">
             <input type="text" name="q" placeholder="🔍 Search your files..." value="{{ query if query else '' }}"
                 style="width: 70%; display: inline-block;">
-            <button type="submit" class="btn" style="width: 25%;">Search</button>
+            <button type="submit" class="btn" style="width: 24%;">Search</button>
             {% if query %}
-            <a href="{{ url_for('index') }}" class="btn btn-danger" style="background: #666;">Clear</a>
+            <a href="{{ url_for('index') }}" class="btn btn-danger">Clear</a>
             {% endif %}
         </form>
-    </div>
+    </section>
 
-    {% for code, name in files %}
-    <div class="file-item">
-        <span><strong>{{ code }}</strong>: {{ name }}</span>
-        <a href="{{ url_for('download', code=code) }}" class="btn">Download</a>
+    <section class="card">
+        <h2>Stored files</h2>
+        {% for code, name, _type, encrypted in files %}
+        <div class="file-item">
+            <span><strong>{{ code }}</strong>: {{ name }} {% if encrypted %}<span class="badge">encrypted</span>{% endif
+                %}</span>
+            <a href="{{ url_for('download', code=code) }}" class="btn">Download</a>
+        </div>
+        {% else %}
+        <p>No files found.</p>
+        {% endfor %}
+    </section>
+    {% else %}
+    <h1>🔐 Telegram Cloud Storage</h1>
+    <p class="hint">Register or login with your Telegram user ID. Uploads can be protected with a separate encryption
+        password before they are stored.</p>
+
+    <div class="grid">
+        <section class="card">
+            <h2>Login</h2>
+            <form action="{{ url_for('login') }}" method="post">
+                <div class="form-group">
+                    <label>Telegram User ID</label>
+                    <input type="text" name="user_id" required>
+                </div>
+                <div class="form-group">
+                    <label>Web password</label>
+                    <input type="password" name="password" required>
+                </div>
+                <button type="submit" class="btn">Login</button>
+            </form>
+        </section>
+
+        <section class="card">
+            <h2>Register</h2>
+            <form action="{{ url_for('register_web') }}" method="post">
+                <div class="form-group">
+                    <label>Telegram User ID</label>
+                    <input type="text" name="user_id" required>
+                </div>
+                <div class="form-group">
+                    <label>Display name</label>
+                    <input type="text" name="username" placeholder="Your name">
+                </div>
+                <div class="form-group">
+                    <label>Web password</label>
+                    <input type="password" name="password" minlength="8" required>
+                </div>
+                <div class="form-group">
+                    <label>Confirm password</label>
+                    <input type="password" name="confirm_password" minlength="8" required>
+                </div>
+                <button type="submit" class="btn">Create account</button>
+            </form>
+            <p class="hint">Bot users can also register with <code>/register</code> and set a password with
+                <code>/setpassword</code>.</p>
+        </section>
     </div>
-    {% else %}
-    <p>No files found.</p>
-    {% endfor %}
-    {% else %}
-    <h1>🔐 Login</h1>
-    <form action="{{ url_for('login') }}" method="post">
-        <div class="form-group">
-            <label>Telegram User ID:</label>
-            <input type="text" name="user_id" required>
-        </div>
-        <div class="form-group">
-            <label>Web Password:</label>
-            <input type="password" name="password" required>
-        </div>
-        <button type="submit" class="btn">Login</button>
-    </form>
-    <p><em>Note: Set your password in the Telegram Bot using <code>/setpassword</code></em></p>
     {% endif %}
 </body>
 

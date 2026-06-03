@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
-DB_FILE = Path("file_db.json")
+BASE_DIR = Path(__file__).resolve().parent
+DB_FILE = BASE_DIR / "file_db.json"
 
 class FileManager:
     def __init__(self):
@@ -31,14 +32,31 @@ class FileManager:
             if code not in self.db:
                 return code
 
-    def save_file_record(self, file_path: str, user_id: int, original_name: str, folder: str = "/") -> str:
+    def save_file_record(
+        self,
+        file_path: str,
+        user_id: int,
+        original_name: str,
+        folder: str = "/",
+        *,
+        encrypted: bool = False,
+        encryption_salt: str | None = None,
+        storage_backend: str = "local",
+        telegram_file_id: str | None = None,
+        telegram_message_id: int | None = None,
+    ) -> str:
         """Saves file metadata and returns a unique code."""
         code = self.generate_code()
         self.db[code] = {
             "path": str(file_path),
             "owner_id": user_id,
             "name": original_name,
-            "folder": folder
+            "folder": folder,
+            "encrypted": encrypted,
+            "encryption_salt": encryption_salt,
+            "storage_backend": storage_backend,
+            "telegram_file_id": telegram_file_id,
+            "telegram_message_id": telegram_message_id,
         }
         self._save_db()
         return code
@@ -51,23 +69,32 @@ class FileManager:
         # Fallback for old format (if any)
         return record if isinstance(record, str) else None
 
+    def get_record(self, code: str) -> Optional[dict]:
+        """Return a file metadata record by code."""
+        record = self.db.get(code.upper())
+        return record if isinstance(record, dict) else None
+
+    def user_owns_file(self, code: str, user_id: int) -> bool:
+        """Check whether a file code belongs to a user."""
+        record = self.get_record(code)
+        return bool(record and record.get("owner_id") == user_id)
+
     def get_user_files(self, user_id: int, folder: str = "/") -> list:
-        """Returns a list of (code, name, type) tuples for the user in the current folder."""
+        """Returns a list of (code, name, type, encrypted) tuples for a folder."""
         files = []
         for code, record in self.db.items():
             if isinstance(record, dict) and record.get("owner_id") == user_id:
-                # Check if file is in the requested folder
                 file_folder = record.get("folder", "/")
                 if file_folder == folder:
-                    files.append((code, record.get("name", "Unknown File"), "file"))
+                    files.append((code, record.get("name", "Unknown File"), "file", record.get("encrypted", False)))
         return files
 
     def get_all_files(self) -> list:
-        """Returns a list of all files for admin view: (code, name, owner_id)."""
+        """Returns all files for admin view: (code, name, owner_id, encrypted)."""
         files = []
         for code, record in self.db.items():
             if isinstance(record, dict):
-                files.append((code, record.get("name", "Unknown"), record.get("owner_id")))
+                files.append((code, record.get("name", "Unknown"), record.get("owner_id"), record.get("encrypted", False)))
         return files
 
     def search_files(self, query: str, user_id: Optional[int] = None) -> list:
@@ -82,10 +109,10 @@ class FileManager:
                 if query in name:
                     if user_id is None:
                         # Admin search: return (code, name, owner)
-                        results.append((code, record.get("name"), owner))
+                        results.append((code, record.get("name"), owner, record.get("encrypted", False)))
                     elif owner == user_id:
                         # User search: return (code, name, type)
-                        results.append((code, record.get("name"), "file"))
+                        results.append((code, record.get("name"), "file", record.get("encrypted", False)))
         return results
 
     def rename_file(self, code: str, new_name: str, user_id: int) -> bool:

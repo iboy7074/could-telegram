@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
 
-USER_DB_FILE = Path("users.json")
+from security import hash_password, verify_password
+
+BASE_DIR = Path(__file__).resolve().parent
+
+USER_DB_FILE = BASE_DIR / "users.json"
 
 class UserManager:
     def __init__(self):
@@ -20,17 +24,17 @@ class UserManager:
         with open(USER_DB_FILE, "w") as f:
             json.dump(self.db, f, indent=4)
 
-    def register(self, user_id: int, username: str) -> bool:
-        """Registers a new user by ID."""
-        uid_str = str(user_id)
-        if uid_str in self.db:
+    def register(self, user_id: int | str, username: str, password: str | None = None) -> bool:
+        """Registers a new user by ID with an optional web password."""
+        uid_str = str(user_id).strip()
+        if not uid_str or uid_str in self.db:
             return False
-        # Initialize with root folder
+
         self.db[uid_str] = {
-            "username": username, 
-            "web_password": None,
+            "username": username or "Unknown",
+            "web_password": hash_password(password) if password else None,
             "current_folder": "/",
-            "folders": ["/"] 
+            "folders": ["/"],
         }
         self._save_db()
         return True
@@ -115,16 +119,34 @@ class UserManager:
         return str(user_id) in self.db
 
     def set_web_password(self, user_id: int, password: str):
-        """Sets a password for web login."""
+        """Sets a hashed password for web login."""
         uid_str = str(user_id)
         if uid_str in self.db:
-            self.db[uid_str]["web_password"] = password
+            self.db[uid_str]["web_password"] = hash_password(password)
             self._save_db()
 
     def validate_web_login(self, user_id: str, password: str) -> bool:
-        """Validates web login credentials."""
-        if user_id in self.db:
-            return self.db[user_id].get("web_password") == password
+        """Validates web login credentials and upgrades legacy raw passwords."""
+        uid_str = str(user_id).strip()
+        if uid_str not in self.db:
+            return False
+
+        stored_password = self.db[uid_str].get("web_password")
+        if verify_password(stored_password, password):
+            return True
+
+        # Backward compatibility for older JSON data that stored raw passwords.
+        if stored_password and stored_password == password:
+            self.db[uid_str]["web_password"] = hash_password(password)
+            self._save_db()
+            return True
+
+        return False
+
+    def get_username(self, user_id: int | str) -> str:
+        """Returns the stored username for display."""
+        return self.db.get(str(user_id), {}).get("username", "Unknown")
+
     def set_admin(self, user_id: int, is_admin: bool = True):
         """Sets admin status for a user."""
         uid_str = str(user_id)
