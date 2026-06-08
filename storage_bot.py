@@ -221,8 +221,9 @@ async def ensure_auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> boo
     # Check if user exists
     user = db.get_user(telegram_id)
     if not user:
-        msg = update.message or update.callback_query.message
-        await msg.reply_text("❌ You need an account. Use /register")
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text("❌ You need an account. Use /register")
         return False
 
     # Try to restore session from database
@@ -238,13 +239,14 @@ async def ensure_auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> boo
         return True
 
     # No valid session — ask user to login
-    msg = update.message or update.callback_query.message
-    await msg.reply_text(
-        "❌ **Session expired.**\n\n"
-        "Your session was lost because the server restarted.\n"
-        "Send /login to re-authenticate.\n\n"
-        "_Your encrypted files are still safe._"
-    )
+    msg = update.effective_message
+    if msg:
+        await msg.reply_text(
+            "❌ **Session expired.**\n\n"
+            "Your session was lost because the server restarted.\n"
+            "Send /login to re-authenticate.\n\n"
+            "_Your encrypted files are still safe._"
+        )
     return False
 
 
@@ -519,6 +521,8 @@ async def folders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Unified callback handler for all inline buttons."""
     query = update.callback_query
+    if not query or not query.data:
+        return
     await query.answer()
 
     if not await ensure_auth(update, context):
@@ -1033,8 +1037,11 @@ def main():
         handle_upload
     ))
 
-    # ── Callback Handler ──
-    app.add_handler(CallbackQueryHandler(callback_handler))
+    # ── Callback Handler (catch-all, excludes ConversationHandler entry points) ──
+    app.add_handler(CallbackQueryHandler(
+        callback_handler,
+        pattern="^(?!new_folder$|rename_)"
+    ))
 
     # ── Error Handler ──
     async def on_error(update: Update, context: ContextTypes.DEFAULT_TYPE):
