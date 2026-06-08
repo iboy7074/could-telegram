@@ -182,7 +182,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b'Cloud Storage Bot — Alive')
+        self.wfile.write(b'Cloud Storage Bot - Alive')
     def log_message(self, format, *args):
         pass
 
