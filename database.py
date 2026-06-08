@@ -137,14 +137,19 @@ class Database:
 
         user_id = c.lastrowid
 
-        # Create default folders
-        default_folders = ["root", "images", "pdfs", "documents", "audio", "video", "archives", "other"]
-        for i, folder_name in enumerate(default_folders):
-            parent_id = None if folder_name == "root" else 1
+        # Create default folders — first insert root, then use its actual id
+        default_subfolders = ["images", "pdfs", "documents", "audio", "video", "archives", "other"]
+        c.execute("""
+            INSERT INTO folders (user_id, name, parent_id)
+            VALUES (?, ?, ?)
+        """, (user_id, "root", None))
+        root_id = c.lastrowid
+
+        for folder_name in default_subfolders:
             c.execute("""
                 INSERT INTO folders (user_id, name, parent_id)
                 VALUES (?, ?, ?)
-            """, (user_id, folder_name, parent_id))
+            """, (user_id, folder_name, root_id))
 
         conn.commit()
         conn.close()
