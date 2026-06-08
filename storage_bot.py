@@ -7,6 +7,7 @@ Persistent sessions — survives Render free plan restarts.
 
 import os
 import io
+import asyncio
 import hashlib
 import base64
 import logging
@@ -416,7 +417,8 @@ async def reg_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     name = context.user_data.pop('reg_name')
     tid = update.effective_user.id
-    ok, msg = db.register_user(tid, name, pw)
+    loop = asyncio.get_event_loop()
+    ok, msg = await loop.run_in_executor(None, db.register_user, tid, name, pw)
     if ok:
         # Auto-login
         context.user_data['authenticated'] = True
@@ -466,7 +468,8 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def login_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pw = update.message.text.strip()
     tid = update.effective_user.id
-    ok, msg = db.authenticate_user(tid, pw)
+    loop = asyncio.get_event_loop()
+    ok, msg = await loop.run_in_executor(None, db.authenticate_user, tid, pw)
     if ok:
         user = db.get_user(tid)
         context.user_data['authenticated'] = True
