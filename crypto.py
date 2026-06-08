@@ -14,7 +14,7 @@ class CryptoManager:
     @staticmethod
     def load_rsa_public_key(pem_base64: str):
         """Load RSA public key from base64 string."""
-        pem_data = "-----BEGIN RSA PUBLIC KEY-----\n" + pem_base64 + "\n-----END RSA PUBLIC KEY-----"
+        pem_data = "-----BEGIN PUBLIC KEY-----\n" + pem_base64 + "\n-----END PUBLIC KEY-----"
         key = serialization.load_pem_public_key(pem_data.encode())
         return key
 
