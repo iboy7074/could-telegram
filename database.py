@@ -1,7 +1,8 @@
 import sqlite3
 import hashlib
 import os
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 from config import DATABASE_PATH, PBKDF2_ITERATIONS, SALT_SIZE
 
 
@@ -23,9 +24,9 @@ class Database:
 
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
+                user_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE NOT NULL,
-                username TEXT,
+                username TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
                 password_salt TEXT NOT NULL,
                 encryption_key_salt TEXT NOT NULL,
@@ -45,8 +46,8 @@ class Database:
                 secret_password_hash TEXT,
                 secret_password_salt TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                FOREIGN KEY (parent_id) REFERENCES folders(folder_id)
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_id) REFERENCES folders(folder_id) ON DELETE SET NULL
             )
         """)
 
@@ -70,8 +71,8 @@ class Database:
                 tags TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                FOREIGN KEY (folder_id) REFERENCES folders(folder_id) ON DELETE CASCADE
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (folder_id) REFERENCES folders(folder_id) ON DELETE SET NULL
             )
         """)
 
@@ -96,11 +97,19 @@ class Database:
                 details TEXT,
                 ip_address TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )
         """)
 
-        # Create default root folders for each user via triggers
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                telegram_id INTEGER PRIMARY KEY,
+                encrypted_password TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                last_active TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
         conn.commit()
         conn.close()
 
@@ -110,13 +119,11 @@ class Database:
         conn = self.get_conn()
         c = conn.cursor()
 
-        # Check if user exists
         c.execute("SELECT user_id FROM users WHERE telegram_id = ?", (telegram_id,))
         if c.fetchone():
             conn.close()
             return False, "User already registered"
 
-        # Hash password with PBKDF2-SHA256
         salt = os.urandom(SALT_SIZE).hex()
         enc_salt = os.urandom(SALT_SIZE).hex()
         password_hash = hashlib.pbkdf2_hmac(
@@ -132,8 +139,8 @@ class Database:
 
         # Create default folders
         default_folders = ["root", "images", "pdfs", "documents", "audio", "video", "archives", "other"]
-        for folder_name in default_folders:
-            parent_id = None if folder_name == "root" else 1  # root folder ID
+        for i, folder_name in enumerate(default_folders):
+            parent_id = None if folder_name == "root" else 1
             c.execute("""
                 INSERT INTO folders (user_id, name, parent_id)
                 VALUES (?, ?, ?)
@@ -162,7 +169,6 @@ class Database:
             conn.close()
             return False, "Invalid password"
 
-        # Update last login
         c.execute("UPDATE users SET last_login = datetime('now') WHERE user_id = ?", (user['user_id'],))
         conn.commit()
         conn.close()
@@ -230,10 +236,10 @@ class Database:
     def get_folders(self, user_id, parent_id=None):
         conn = self.get_conn()
         c = conn.cursor()
-        if parent_id:
-            c.execute("SELECT * FROM folders WHERE user_id = ? AND parent_id = ?", (user_id, parent_id))
+        if parent_id is not None:
+            c.execute("SELECT * FROM folders WHERE user_id = ? AND parent_id = ? ORDER BY name", (user_id, parent_id))
         else:
-            c.execute("SELECT * FROM folders WHERE user_id = ?", (user_id,))
+            c.execute("SELECT * FROM folders WHERE user_id = ? ORDER BY name", (user_id,))
         folders = c.fetchall()
         conn.close()
         return [dict(f) for f in folders]
@@ -241,17 +247,25 @@ class Database:
     def get_folder_by_name(self, user_id, name, parent_id=None):
         conn = self.get_conn()
         c = conn.cursor()
-        if parent_id:
+        if parent_id is not None:
             c.execute("SELECT * FROM folders WHERE user_id = ? AND name = ? AND parent_id = ?",
-                     (user_id, name, parent_id))
+                      (user_id, name, parent_id))
         else:
             c.execute("SELECT * FROM folders WHERE user_id = ? AND name = ?", (user_id, name))
         folder = c.fetchone()
         conn.close()
         return dict(folder) if folder else None
 
-    def get_folder_by_extension(self, user_id, filename):
-        """Auto-detect folder based on file extension"""
+    def get_folder_by_id(self, folder_id):
+        conn = self.get_conn()
+        c = conn.cursor()
+        c.execute("SELECT * FROM folders WHERE folder_id = ?", (folder_id,))
+        folder = c.fetchone()
+        conn.close()
+        return dict(folder) if folder else None
+
+    def get_folder_for_extension(self, user_id, filename):
+        """Auto-detect folder based on file extension."""
         ext = os.path.splitext(filename)[1].lower()
         from config import FOLDERS
         for folder_name, extensions in FOLDERS.items():
@@ -259,40 +273,104 @@ class Database:
                 folder = self.get_folder_by_name(user_id, folder_name, parent_id=1)
                 if folder:
                     return folder
-        # Default to 'other'
         return self.get_folder_by_name(user_id, "other", parent_id=1)
 
     # ─── File Management ───────────────────────────────────────────────
 
-    def save_file_metadata(self, user_id, folder_id, telegram_file_id, telegram_file_unique_id,
-                          original_name, encrypted_name, mime_type, size,
-                          compressed_size, encrypted_size, checksum_sha256,
-                          encryption_iv, is_encrypted=1, is_compressed=1, tags=""):
+    def save_file_metadata(
+        self,
+        user_id,
+        folder_id,
+        telegram_file_id,
+        telegram_file_unique_id,
+        original_name,
+        encrypted_name,
+        mime_type,
+        size,
+        compressed_size,
+        encrypted_size,
+        checksum_sha256,
+        encryption_iv,
+        is_encrypted=1,
+        is_compressed=1,
+        tags=""
+    ):
+        """
+        Save file metadata after successful encryption and upload to Telegram.
+
+        Parameters:
+            user_id (int): Owner of the file
+            folder_id (int): Folder to place the file in
+            telegram_file_id (str): Telegram file_id of the encrypted blob
+            telegram_file_unique_id (str): Telegram unique file identifier
+            original_name (str): Original filename before encryption
+            encrypted_name (str): Name of the encrypted file on Telegram
+            mime_type (str): MIME type of the original file
+            size (int): Original file size in bytes
+            compressed_size (int): Size after compression
+            encrypted_size (int): Size after encryption
+            checksum_sha256 (str): SHA-256 hash of encrypted data
+            encryption_iv (str): Nonce + salt combined (hex)
+            is_encrypted (int): 1 if encrypted, 0 if plaintext
+            is_compressed (int): 1 if compressed, 0 if not
+            tags (str): Optional tags for search
+
+        Returns:
+            int: The file_id of the saved record
+        """
         conn = self.get_conn()
         c = conn.cursor()
 
         c.execute("""
-            INSERT INTO files (user_id, folder_id, telegram_file_id, telegram_file_unique_id,
-                              original_name, encrypted_name, mime_type, size,
-                              compressed_size, encrypted_size, checksum_sha256,
-                              encryption_iv, is_encrypted, is_compressed, tags)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, folder_id, telegram_file_id, telegram_file_unique_id,
-              original_name, encrypted_name, mime_type, size,
-              compressed_size, encrypted_size, checksum_sha256,
-              encryption_iv, is_encrypted, is_compressed, tags))
+            INSERT INTO files (
+                user_id,
+                folder_id,
+                telegram_file_id,
+                telegram_file_unique_id,
+                original_name,
+                encrypted_name,
+                mime_type,
+                size,
+                compressed_size,
+                encrypted_size,
+                checksum_sha256,
+                encryption_iv,
+                is_encrypted,
+                is_compressed,
+                tags
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            folder_id,
+            telegram_file_id,
+            telegram_file_unique_id,
+            original_name,
+            encrypted_name,
+            mime_type,
+            size,
+            compressed_size,
+            encrypted_size,
+            checksum_sha256,
+            encryption_iv,
+            is_encrypted,
+            is_compressed,
+            tags
+        ))
 
         file_id = c.lastrowid
 
-        # Update storage used
-        c.execute("UPDATE users SET storage_used = storage_used + ? WHERE user_id = ?",
-                 (size, user_id))
+        # Update user storage usage
+        c.execute("""
+            UPDATE users SET storage_used = storage_used + ?
+            WHERE user_id = ?
+        """, (size, user_id))
 
         conn.commit()
         conn.close()
         return file_id
 
     def get_files_in_folder(self, user_id, folder_id):
+        """Get all files in a specific folder, ordered by newest first."""
         conn = self.get_conn()
         c = conn.cursor()
         c.execute("""
@@ -305,6 +383,7 @@ class Database:
         return [dict(f) for f in files]
 
     def get_file_by_id(self, file_id):
+        """Get a single file by its file_id."""
         conn = self.get_conn()
         c = conn.cursor()
         c.execute("SELECT * FROM files WHERE file_id = ?", (file_id,))
@@ -312,29 +391,79 @@ class Database:
         conn.close()
         return dict(file) if file else None
 
-    def delete_file(self, file_id):
+    def get_user_files(self, user_id, limit=50, offset=0):
+        """Get recent files for a user."""
         conn = self.get_conn()
         c = conn.cursor()
-        file = self.get_file_by_id(file_id)
-        if file:
-            c.execute("UPDATE users SET storage_used = MAX(0, storage_used - ?) WHERE user_id = ?",
-                     (file['size'], file['user_id']))
-            c.execute("DELETE FROM files WHERE file_id = ?", (file_id,))
-            conn.commit()
-            conn.close()
-            return True
+        c.execute("""
+            SELECT f.*, fol.name as folder_name
+            FROM files f
+            LEFT JOIN folders fol ON f.folder_id = fol.folder_id
+            WHERE f.user_id = ?
+            ORDER BY f.created_at DESC
+            LIMIT ? OFFSET ?
+        """, (user_id, limit, offset))
+        files = c.fetchall()
         conn.close()
-        return False
+        return [dict(f) for f in files]
+
+    def search_files(self, user_id, query, limit=20):
+        """Search files by original name."""
+        conn = self.get_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT f.*, fol.name as folder_name
+            FROM files f
+            LEFT JOIN folders fol ON f.folder_id = fol.folder_id
+            WHERE f.user_id = ? AND f.original_name LIKE ?
+            ORDER BY f.created_at DESC
+            LIMIT ?
+        """, (user_id, f"%{query}%", limit))
+        files = c.fetchall()
+        conn.close()
+        return [dict(f) for f in files]
+
+    def update_file_name(self, file_id, user_id, new_name):
+        """Rename a file."""
+        conn = self.get_conn()
+        c = conn.cursor()
+        c.execute("""
+            UPDATE files SET original_name = ?, updated_at = datetime('now')
+            WHERE file_id = ? AND user_id = ?
+        """, (new_name, file_id, user_id))
+        conn.commit()
+        conn.close()
+
+    def delete_file(self, file_id):
+        """Delete a file record and update storage stats."""
+        conn = self.get_conn()
+        c = conn.cursor()
+
+        file = self.get_file_by_id(file_id)
+        if not file:
+            conn.close()
+            return False
+
+        # Subtract file size from user's storage
+        c.execute("""
+            UPDATE users SET storage_used = MAX(0, storage_used - ?)
+            WHERE user_id = ?
+        """, (file['size'], file['user_id']))
+
+        # Delete the file record (cascades to shared_links)
+        c.execute("DELETE FROM files WHERE file_id = ?", (file_id,))
+        conn.commit()
+        conn.close()
+        return True
 
     # ─── Sharing ───────────────────────────────────────────────────────
 
     def create_share_link(self, file_id, max_downloads=-1, expires_in_hours=24):
-        import uuid
+        """Create a shareable download link for a file."""
         conn = self.get_conn()
         c = conn.cursor()
 
         token = uuid.uuid4().hex
-        from datetime import timedelta
         expires_at = (datetime.utcnow() + timedelta(hours=expires_in_hours)).isoformat()
 
         c.execute("""
@@ -348,10 +477,12 @@ class Database:
         return token
 
     def get_share_link(self, token):
+        """Get share link details including file info."""
         conn = self.get_conn()
         c = conn.cursor()
         c.execute("""
-            SELECT sl.*, f.* FROM shared_links sl
+            SELECT sl.*, f.*
+            FROM shared_links sl
             JOIN files f ON sl.file_id = f.file_id
             WHERE sl.share_token = ?
         """, (token,))
@@ -360,15 +491,28 @@ class Database:
         return dict(link) if link else None
 
     def increment_share_download(self, link_id):
+        """Increment download count for a shared link."""
         conn = self.get_conn()
         c = conn.cursor()
-        c.execute("UPDATE shared_links SET downloads_count = downloads_count + 1 WHERE link_id = ?", (link_id,))
+        c.execute("""
+            UPDATE shared_links SET downloads_count = downloads_count + 1
+            WHERE link_id = ?
+        """, (link_id,))
+        conn.commit()
+        conn.close()
+
+    def revoke_share_link(self, token):
+        """Delete a share link."""
+        conn = self.get_conn()
+        c = conn.cursor()
+        c.execute("DELETE FROM shared_links WHERE share_token = ?", (token,))
         conn.commit()
         conn.close()
 
     # ─── Activity Logging ──────────────────────────────────────────────
 
     def log_activity(self, user_id, action, details=None, ip_address=None):
+        """Log a user activity."""
         conn = self.get_conn()
         c = conn.cursor()
         c.execute("""
@@ -377,3 +521,17 @@ class Database:
         """, (user_id, action, details, ip_address))
         conn.commit()
         conn.close()
+
+    def get_user_activity(self, user_id, limit=50):
+        """Get recent activity for a user."""
+        conn = self.get_conn()
+        c = conn.cursor()
+        c.execute("""
+            SELECT * FROM activity_log
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (user_id, limit))
+        rows = c.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
