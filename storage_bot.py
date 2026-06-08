@@ -507,7 +507,9 @@ async def folders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await ensure_auth(update, context):
         return
     user = db.get_user(update.effective_user.id)
-    folders_list = db.get_folders(user['user_id'], parent_id=1)
+    root = db.get_folder_by_name(user['user_id'], "root")
+    root_id = root['folder_id'] if root else None
+    folders_list = db.get_folders(user['user_id'], parent_id=root_id)
     await update.message.reply_text(
         "📁 **Your Folders**\n\n_Tap a folder to browse files:_",
         reply_markup=folder_keyboard(folders_list, context.user_data.get('unlocked_secrets'))
@@ -530,8 +532,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     unlocked = context.user_data.get('unlocked_secrets', {})
 
     # ── Back to folders ──
+    def _get_root_folders():
+        root = db.get_folder_by_name(user['user_id'], "root")
+        root_id = root['folder_id'] if root else None
+        return db.get_folders(user['user_id'], parent_id=root_id)
+
     if data == "back_folders":
-        fl = db.get_folders(user['user_id'], parent_id=1)
+        fl = _get_root_folders()
         await query.edit_message_text(
             "📁 **Your Folders**",
             reply_markup=folder_keyboard(fl, unlocked)
@@ -539,9 +546,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "back_files":
-        # Figure out which folder we came from (stored in callback)
-        # Fallback: show folders
-        fl = db.get_folders(user['user_id'], parent_id=1)
+        fl = _get_root_folders()
         await query.edit_message_text(
             "📁 **Your Folders**",
             reply_markup=folder_keyboard(fl, unlocked)
@@ -729,7 +734,9 @@ async def create_folder_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return SECRET_FOLDER_PASSWORD
 
-    db.create_folder(user['user_id'], name, parent_id=1)
+    root = db.get_folder_by_name(user['user_id'], "root")
+    root_id = root['folder_id'] if root else None
+    db.create_folder(user['user_id'], name, parent_id=root_id)
     await update.message.reply_text(f"✅ Folder `{name}` created!")
     db.log_activity(user['user_id'], "create_folder", name)
     return ConversationHandler.END
@@ -748,7 +755,9 @@ async def secret_folder_pw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Creating new secret folder
     if 'secret_folder_name' in context.user_data:
         name = context.user_data.pop('secret_folder_name')
-        fid = db.create_folder(user['user_id'], name, parent_id=1,
+        root = db.get_folder_by_name(user['user_id'], "root")
+        root_id = root['folder_id'] if root else None
+        fid = db.create_folder(user['user_id'], name, parent_id=root_id,
                                is_secret=True, secret_password=pw)
         unlocked = context.user_data.get('unlocked_secrets', {})
         unlocked[fid] = True
