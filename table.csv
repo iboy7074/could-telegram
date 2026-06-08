@@ -1,0 +1,16 @@
+Feature,Status
+User Registration,✅ Password-based accounts with PBKDF2 hashing
+Login/Auth,✅ Session-based authentication
+Auto Folder Sorting,"✅ Images → /images, PDFs → /pdfs, etc."
+Manual Folder Creation,✅ Users create custom folders
+Secret Folders,✅ Password-protected folders with separate auth
+End-to-End Encryption,✅ AES-256-GCM before upload
+File Compression,✅ zlib level 9 compression before encryption
+File Upload,"✅ Documents, photos, videos, audio"
+File Download,✅ Decrypt + decompress on download
+File Rename,✅ Edit filenames in-place
+File Delete,✅ Remove files and update storage stats
+Share Links,✅ Expiring shareable download links
+Search,✅ /search <query> command
+Storage Stats,✅ Usage tracking per user
+Activity Logging,✅ Full audit trail
