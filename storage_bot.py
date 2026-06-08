@@ -113,30 +113,13 @@ class CryptoEngine:
 # DATABASE — Session table addition
 # ══════════════════════════════════════════════════════════════════════════
 
-def _init_session_table():
-    """Add sessions table to the database if it doesn't exist."""
-    conn = sqlite3.connect(db.db_path)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS sessions (
-            telegram_id INTEGER PRIMARY KEY,
-            encrypted_password TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now')),
-            last_active TEXT DEFAULT (datetime('now'))
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-# Call this once at startup
-_init_session_table()
 
 
 def save_session(telegram_id: int, password: str):
     """Encrypt and store the user's password for session persistence."""
     f = Fernet(CryptoEngine.get_fernet_key())
     encrypted = f.encrypt(password.encode())
-    conn = sqlite3.connect(db.db_path)
+    conn = db.get_conn()
     c = conn.cursor()
     c.execute("""
         INSERT OR REPLACE INTO sessions (telegram_id, encrypted_password, last_active)
@@ -148,7 +131,7 @@ def save_session(telegram_id: int, password: str):
 
 def restore_session(telegram_id: int) -> Optional[str]:
     """Restore a saved session password. Returns None if expired or not found."""
-    conn = sqlite3.connect(db.db_path)
+    conn = db.get_conn()
     c = conn.cursor()
     c.execute("""
         SELECT encrypted_password, last_active FROM sessions WHERE telegram_id = ?
@@ -163,11 +146,11 @@ def restore_session(telegram_id: int) -> Optional[str]:
         last_active = datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S")
         if datetime.utcnow() - last_active > timedelta(days=7):
             # Session expired
-            conn = sqlite3.connect(db.db_path)
-            c = conn.cursor()
-            c.execute("DELETE FROM sessions WHERE telegram_id = ?", (telegram_id,))
-            conn.commit()
-            conn.close()
+            conn2 = db.get_conn()
+            c2 = conn2.cursor()
+            c2.execute("DELETE FROM sessions WHERE telegram_id = ?", (telegram_id,))
+            conn2.commit()
+            conn2.close()
             return None
     except Exception:
         pass
@@ -182,7 +165,7 @@ def restore_session(telegram_id: int) -> Optional[str]:
 
 def touch_session(telegram_id: int):
     """Update last_active timestamp for a session."""
-    conn = sqlite3.connect(db.db_path)
+    conn = db.get_conn()
     c = conn.cursor()
     c.execute("UPDATE sessions SET last_active = datetime('now') WHERE telegram_id = ?",
               (telegram_id,))
@@ -378,7 +361,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
 
-    conn = sqlite3.connect(db.db_path)
+    conn = db.get_conn()
     c = conn.cursor()
     c.execute("SELECT COUNT(*), COALESCE(SUM(size),0) FROM files WHERE user_id=?",
               (user['user_id'],))
@@ -507,7 +490,7 @@ async def login_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tid = update.effective_user.id
     context.user_data.clear()
-    conn = sqlite3.connect(db.db_path)
+    conn = db.get_conn()
     c = conn.cursor()
     c.execute("DELETE FROM sessions WHERE telegram_id = ?", (tid,))
     conn.commit()
@@ -652,10 +635,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Decrypt
             user_db = db.get_user(update.effective_user.id)
             user_salt = bytes.fromhex(user_db['encryption_key_salt'])
+            # encryption_iv stores salt_hex (64 chars) + nonce_hex (24 chars)
+            iv = file['encryption_iv']
+            salt_hex = iv[:64]
+            nonce_hex = iv[64:]
             plain = CryptoEngine.decrypt(
                 bytes(enc_data),
-                file['encryption_iv'],
-                file['encryption_iv'][:64],  # Simplified - in production store salt per file
+                nonce_hex,
+                salt_hex,
                 pw,
                 user_salt
             )
@@ -801,12 +788,7 @@ async def rename_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     new_name = update.message.text.strip()
-    conn = sqlite3.connect(db.db_path)
-    c = conn.cursor()
-    c.execute("""UPDATE files SET original_name=?, updated_at=datetime('now')
-                  WHERE file_id=? AND user_id=?""", (new_name, fid, user['user_id']))
-    conn.commit()
-    conn.close()
+    db.update_file_name(fid, user['user_id'], new_name)
     await update.message.reply_text(f"✅ Renamed to `{new_name}`")
     return ConversationHandler.END
 
@@ -935,15 +917,7 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
 
-    conn = sqlite3.connect(db.db_path)
-    c = conn.cursor()
-    c.execute("""
-        SELECT f.*, fol.name AS folder_name FROM files f
-        LEFT JOIN folders fol ON f.folder_id = fol.folder_id
-        WHERE f.user_id = ? ORDER BY f.created_at DESC LIMIT 20
-    """, (user['user_id'],))
-    rows = c.fetchall()
-    conn.close()
+    rows = db.get_user_files(user['user_id'], limit=20)
 
     if not rows:
         await update.message.reply_text("📂 No files yet. Send me one!")
@@ -967,15 +941,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
 
-    conn = sqlite3.connect(db.db_path)
-    c = conn.cursor()
-    c.execute("""
-        SELECT f.*, fol.name AS folder_name FROM files f
-        LEFT JOIN folders fol ON f.folder_id = fol.folder_id
-        WHERE f.user_id = ? AND f.original_name LIKE ? ORDER BY f.created_at DESC LIMIT 20
-    """, (user['user_id'], f"%{q}%"))
-    rows = c.fetchall()
-    conn.close()
+    rows = db.search_files(user['user_id'], q, limit=20)
 
     if not rows:
         await update.message.reply_text(f"No files matching `{q}`")
